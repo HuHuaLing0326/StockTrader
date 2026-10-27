@@ -1,0 +1,108 @@
+# 数据层配置（设计文档：docs/design/data-layer-1a.md 第九、十二节）
+#
+# 这里是所有可调数值的唯一来源；代码只校验类型和取值范围，不提供默认值。
+# 缺少任何一项、或取值超出范围，程序启动时直接报错。
+# 用其他配置文件（例如测试）：设置环境变量 STOCKTRADER_DATA_CONFIG 指向该文件。
+# 相对路径以项目根目录为基准。
+
+# ---- 路径与模式 ----
+data_dir = "data"                 # 数据根目录；实际目录为 data/<mode>/
+mode = "real"                     # real 或 test，两种模式的数据库和目录物理隔离
+
+# ---- 时间规则 ----
+finalize_after = 15:30:00         # 日线定型时刻，不早于 15:00；晚半小时是为盘后固定价格交易留余量
+calendar_future_max_age_hours = 24      # 未来日期的交易日结论最长有效小时数，1–168
+calendar_next_windows_days = [14, 45, 370]   # 查下一个交易日时逐级扩大的窗口（天），严格递增
+
+# ---- 采集范围 ----
+backfill_start = 2015-01-01       # 历史回补起点，不早于 1990-12-19
+include_delisted = true           # 回补时包含期间退市的股票，缓解幸存者偏差
+boards = ["MAIN", "CHINEXT", "STAR"]    # 采集的板块：MAIN 主板、CHINEXT 创业板、STAR 科创板、BSE 北交所
+reference_indices = ["000300.SH", "000001.SH", "399001.SZ", "399006.SZ", "000905.SH", "000852.SH", "000688.SH"]
+reference_etfs = ["510300.SH", "510500.SH", "159915.SZ", "588000.SH"]
+
+# ---- 快照与同步 ----
+snapshot_batch_size = 200         # 腾讯批量报价单次代码数，1–300（实测 300 可用）
+instruments_max_age_days = 7      # 快照所用代码清单的最长有效天数，1–30
+coverage_threshold = 0.98         # 每日同步覆盖率达到多少算完成，0.5–1.0
+
+# ---- 数据质量 ----
+implied_price_tolerance = 0.02    # 成交均价允许超出当日最低价、最高价的比例，0–0.2；用于发现成交量单位错误
+
+# ---- 存储 ----
+store_lock_timeout_s = 30         # 等待其他进程释放数据库的秒数，1–600
+raw_archive = true                # 是否存档原始响应
+raw_archive_retention_days = 0    # 原始响应保留天数，0 表示永久
+
+# ---- HTTP 通用规则 ----
+[http]
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+retryable_status_codes = [429, 500, 502, 503, 504]   # 可有限次重试，间隔指数增长
+blocked_status_codes = [403, 456]                     # 风控或拒绝信号：一律不重试，计入断路器
+backoff_base_s = 1.0              # 第 n 次重试前等待 backoff_base_s × 2^(n-1) 秒，0–60
+backoff_max_s = 8.0               # 单次重试等待的上限，不小于 backoff_base_s
+redact_query_keys = ["token", "apikey", "api_key", "key"]   # 写入台账和存档索引时隐去这些参数的值
+
+# ---- 数据源接口族 ----
+# enabled 是否启用；min_interval_s 两次请求的最小间隔（上一次结束到下一次开始）；
+# jitter_s 在最小间隔之上再加的随机抖动范围；timeout_s 单次超时；
+# long_timeout_s 全量类慢接口的超时（没有这类接口时省略）；retries 可重试错误的重试次数；
+# breaker_threshold 连续失败多少次进入冷却；breaker_cooldown_s 冷却秒数，60 秒到 7 天；
+# blocked_cooldown_s 收到风控信号（403、被拉黑、东方财富断开连接等）时立即冷却的秒数，60 秒到 7 天；
+# cross_process_serial 是否跨进程串行（多个进程共用同一个间隔）；
+# cross_process_wait_s 跨进程串行时最多等待其他进程多少秒，应大于该接口族的最长超时；
+# disconnect_means_blocked 服务器直接断开连接是否视为风控信号（是则不重试）；
+# proxy 代理地址（不走代理时省略）。
+
+[families.tencent]
+enabled = true
+min_interval_s = 0.5
+jitter_s = [0.1, 0.4]
+timeout_s = 10
+retries = 2
+breaker_threshold = 3
+breaker_cooldown_s = 1800
+blocked_cooldown_s = 1800
+cross_process_serial = false
+cross_process_wait_s = 60
+disconnect_means_blocked = false
+
+[families.sina]
+enabled = true
+min_interval_s = 1.0
+jitter_s = [0.1, 0.4]
+timeout_s = 10
+retries = 2
+breaker_threshold = 3
+breaker_cooldown_s = 1800
+blocked_cooldown_s = 1800
+cross_process_serial = false
+cross_process_wait_s = 60
+disconnect_means_blocked = false
+
+[families.baostock]
+enabled = true
+min_interval_s = 0.3
+jitter_s = [0.0, 0.0]
+timeout_s = 120
+long_timeout_s = 600
+retries = 1                       # 会话失效时重新登录后重试的次数
+breaker_threshold = 3
+breaker_cooldown_s = 1800
+blocked_cooldown_s = 43200                  # wm 2026-10-24 实测：并行会话触发拉黑（登录返回 10001011），首次封禁约 6 小时，再犯更久
+cross_process_serial = true
+cross_process_wait_s = 900
+disconnect_means_blocked = false
+
+[families.eastmoney]
+enabled = false                   # 2026-10-25 实测第一个请求即被断开，复测通过前不启用
+min_interval_s = 1.5
+jitter_s = [0.1, 0.5]
+timeout_s = 15
+retries = 2
+breaker_threshold = 2
+breaker_cooldown_s = 21600
+blocked_cooldown_s = 21600
+cross_process_serial = true
+cross_process_wait_s = 120
+disconnect_means_blocked = true   # wm 实测：定向封禁表现为直接断开连接

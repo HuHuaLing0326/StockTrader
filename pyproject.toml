@@ -1,0 +1,47 @@
+[project]
+name = "stocktrader"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "agentscope",
+    "akshare>=1.19.3",
+    "baostock>=0.9.4",
+    "duckdb>=2.0.0",
+    "filelock>=3.16",
+    "mootdx>=0.9.11",
+    "pandas>=2.2,<3",
+    "pydantic>=2.12",
+    "reme-ai",
+    "requests>=2.32",
+]
+
+[project.scripts]
+stocktrader = "stocktrader:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv.workspace]
+members = [
+    "vendor/agentscope",
+    "vendor/ReMe",
+]
+
+[tool.uv.sources]
+agentscope = { workspace = true, editable = true }
+reme-ai = { workspace = true, editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live' --strict-markers"
+markers = [
+    "live: 真实联网测试，直接请求外部数据源；默认不运行，用 pytest -m live 显式运行",
+]
